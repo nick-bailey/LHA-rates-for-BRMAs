@@ -1,0 +1,1891 @@
+---
+title: "LHA rates - v2.1"
+author: "Nick Bailey"
+date: '2024-05-15'
+output: 
+  html_document: 
+    code_folding: hide
+---
+
+
+```{r setup, include=FALSE}
+
+# knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+# # first time only
+# install.packages("readODS")
+# install.packages("here")
+# install.packages("tidyverse")
+
+library(readODS)  # for Wales
+library(here)
+library(readxl)
+library(data.table)
+library(tidyverse)
+
+# empty list for results
+list_lha <- list()
+
+# output filename
+output_filename <- "lha_rates_2025_v2.1.csv"
+
+```
+
+
+# Local Housing Allowance rates for Broad Rental Market Areas in the UK, 2012/13 onwards
+
+## Introduction
+This Rmd creates a single csv file with the weekly Local Housing Allowance (LHA) rates for Broad Rental Market Areas (BRMAs) across the UK from 2012/13 onwards. 
+
+* v2.0 (May 2024) included Northern Ireland for the first time. 
+* v2.1 (Feb 2025) added LHA rates for 2025/26
+
+
+DoI: https://doi.org/10.20394/tbc 
+
+Citation: Urban Big Data Centre (2024). Local Housing Allowance (LHA) rates per Broad Rental Market Area (BRMA), UK, 2012-2024 (v2) [Data set]. University of Glasgow. https://doi.org/10.20394/tbc
+
+
+LHA is a means-tested housing benefit for households in the private rented sector. BRMAs are the spatial units used for the administration of LHA. Since 2011, there have been 200 BRMAs in total (England: 152; Northern Ireland: 8; Scotland: 18; Wales: 23; but note that one BRMA spans England and Wales). LHA rates set the maximum level of housing benefit a household can receive in a given BRMA and is dependent on the size of the property. The file also includes estimates of the 30th centile rent for each BRMA as this is calculated separately by the relevant Government agency as a reference point for LHA. 
+
+There are no 30th centile rents for any part of Britain for 2012/13 nor for Northern Ireland in 2018. There are a very small number of cases where 30th centile rents are missing, presumably due to a lack of market evidence. 
+
+### Background: Housing Benefit and LHA rates
+LHA rates are set relative to the costs of private rented housing in each BRMA with separate rates by property size (room in a shared property, and then by number of bedrooms for self-contained property up to a maximum of four bedrooms). The rates are calculated based on evidence of market rents for current tenancies collected by the relevant government agency in each country. Evidence collected across the twelve months of the year to September is used to set rates for the following financial year (April to March). Rents which are supported by LHA are removed from the database where possible before calculation of market rent levels. From April 2011, the maximum LHA rate was reduced from the median rent for each BRMA to the 30th centile rent. From 2012 onwards, limits were placed on the annual increases in LHA rates so the LHA rates tended to fall behind the 30th centile although there was some room for local variation in rent increases in recognition of exceptional rent pressures. LHA rates were restored to the 30th centile in April 2020 with the onset of the pandemic but then saw no annual increases through to 2023/24. In 2024, rates were again reset to the 30th centile. 
+
+There is also national maximum cap for LHA rates although this tends to have an impact only in Central and Inner London where rents are highest. Many households are also affected by the 'benefit cap' which limits the total amount of benefit they can receive in a year, and this is much more likely to affect those living in locations where renting is more expensive and LHA therefore greater. 
+
+Annual increases were limited as follows:
+* in 2012, there was no increase;
+* in 2013, increases were limited to the Consumer Price Index; 
+* in 2014 and 2015, the maximum increase was 1%;  
+* from 2016 to 2019, there were no increases for four years; 
+* in 2020, rates were reset to the 30th centile with the onset of the pandemic but still subject to the national maximum level (impacting some areas in Central and Inner London only); 
+* from 2021 to 2023, there were again no increases for three years;
+* in 2024, rates were reset to the 30th centile; 
+* in 2025, rates remained the same as at 1 April 2024. 
+
+Housing Benefit is administered by local authorities using the published rates which are set nationally. It is therefore administered separately from welfare benefits administered by the Department for Work and Pensions (DWP). With the introduction from 2014 of the new welfare benefit, Universal Credit (UC), payment of housing benefit was included within that claim and therefore administered by the DWP. As a result, the DWP publish separate tables showing monthly UC LHA rates (https://www.gov.uk/government/collections/universal-credit-local-housing-allowance-rates). To date, these do not appear to have differed from the LHA rates for Housing Benefit and are therefore not included separately in the file produced here.
+
+### File structure
+The final file has the following fields: 
+
+* country: England, Northern Ireland, Scotland or Wales  (NB that the BRMA spanning England and Wales is listed here as England) [character]; 
+* brma: the BRMA reference number. NB that NI BRMAs renumbered 201-208 to avoid clash with English BRMAs [numeric]; 
+* brma_name: the name for the BRMA [character]; 
+* year: financial year (2012 = 2012/13, etc.) [numeric]; 
+* beds: number of bedrooms in property (0 = bedroom in shared accommodation; 1 = one bedroom property; etc.) [numeric]; 
+* cent30: the 30th centile weekly rent (in £) [numeric]; and
+* lha: the weekly LHA allowance rate (in £) [numeric]. 
+
+### Licence
+The process here uses open data throughout. The resulting file is published under an Open Government Licence (OGL)  (https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/). LHA rates are published under OGL. Some use is also made of an open boundary file for BRMAs created by Owen Boswarva and published on his Datadaptive website (https://www.datadaptive.com/?pg=2), also under OGL. 
+
+
+### Attribution
+As required by the licences for the data on which we are drawing here, the following is an attribution statement that acknowledges the intellectual property rights of the third-party providers of open data used in the data collection. You must include this statement if you publish or redistribute the data.
+
+"Contains Scottish Government data © Crown copyright and database right 2022. Contains Ordnance Survey data © Crown copyright and database right 2022. Contains public sector information from Valuation Office Agency and Rent Officers Wales licensed under the Open Government Licence v3.0."
+
+
+## BRMA lookup
+We need a lookup between BRMA name and BRMA number since published data for LHA rates usually use only one or the other. Lookup is used later to ensure we have both. Note the manual addition of codes for NI with numbering selected to avoid clash with other nations. 
+
+```{r brma lookup}
+
+df_brma <- read_csv(here("data-input", "brma_gb", "CSV", "BRMA_GB.CSV")) %>% 
+  rename(brma = BRMAID, 
+         brma_name = BRMANAME) %>% 
+  mutate(brma = as.numeric(brma)) %>% 
+  rbind(data.frame(brma = c(208, 207, 203, 202, 204, 201, 206, 205),
+                   brma_name = c('Belfast', 'Lough Neagh Upper', 'Lough Neagh Lower', 'North', 
+                                 'North West', 'South', 'South East', 'South West')))
+
+```
+
+
+## England
+
+### LHA data sources
+At March 2025, the main LHA page was here:  https://www.gov.uk/government/collections/local-housing-allowance-lha-rates. No longer has links to pages for earlier years from 2015/16 onwards as before, only current year. Previously, earlier years (2012-13 to 2014/15) were available through the web archive so possible that more years now found there. In 2012/13, the file only provides LHA rates, not 30th centile rents:
+
+* https://webarchive.nationalarchives.gov.uk/ukgwa/20140711210208/http://www.voa.gov.uk/corporate/RentOfficers/LHARates/april2014lha.html and https://webarchive.nationalarchives.gov.uk/ukgwa/20140711210208mp_/http://www.voa.gov.uk/corporate/_downloads/xls/2014_LHA_RATES.xls
+* https://webarchive.nationalarchives.gov.uk/ukgwa/20141002132306/http://www.voa.gov.uk/corporate/RentOfficers/LHARates/april2013lha.html and https://webarchive.nationalarchives.gov.uk/ukgwa/20141002132306mp_/http://www.voa.gov.uk/corporate/_downloads/xls/April_2013_LHArates.xls
+* https://webarchive.nationalarchives.gov.uk/ukgwa/20140712022012/http://www.voa.gov.uk/corporate/RentOfficers/LHARates/lhaApr2012.html and https://webarchive.nationalarchives.gov.uk/ukgwa/20140712022012mp_/http://www.voa.gov.uk/corporate/_dataSources/April-2012-LHA-Rates.csv
+
+As LHA rates and 30th centile rents are held on different sheets within each file, we first read in the LHA rates for each year from local spreadsheets and combine into single file before doing the same for 30th centile rents. Sheet layout and column names change from year-to-year. Some of the published tables use the following terms to describe property size:
+
+* CAT A:	A dwelling where the tenant has exclusive use of only one bedroom with shared use of other facilities (coded 0).
+* CAT B:	A dwelling where the tenant has exclusive use of only one bedroom with exclusive use of other facilities (coded 1).
+* CAT C:	A dwelling where the tenant has the use of only two bedrooms (coded 2).
+* CAT D:	A dwelling where the tenant has the use of only three bedrooms (coded 3).
+* CAT E:	A dwelling where the tenant has the use of only four bedrooms (coded 4).
+
+
+```{r read eng lha}
+
+# empty list of dfs
+list_df <- list()
+
+# 25/26
+list_df[[15]] <- read_xlsx(here("data-input", "lha_eng", "2025-26_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 4', 
+                      skip = 1) %>% 
+  mutate(year = 2025) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 24/25
+list_df[[14]] <- read_xlsx(here("data-input", "lha_eng", "2024-25_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 4', 
+                      skip = 1) %>% 
+  mutate(year = 2024) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 23/24 
+list_df[[13]] <- read_xlsx(here("data-input", "lha_eng", "2023-24_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 4', 
+                      skip = 1) %>% 
+  mutate(year = 2023) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 22/23 
+list_df[[12]] <- read_xlsx(here("data-input", "lha_eng", "2022-23_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 4', 
+                      skip = 1) %>% 
+  mutate(year = 2022) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 21/22 
+list_df[[11]] <- read_xlsx(here("data-input", "lha_eng", "2021-22_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 4', 
+                      skip = 1) %>% 
+  mutate(year = 2021) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 20/21 - has monthly as well as weekly so drop
+list_df[[10]] <- read_xlsx(here("data-input", "lha_eng", "AMENDED__CORVID_19__2020_21_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 4', 
+                      skip = 1) 
+list_df[[10]] <- list_df[[10]][ ,1:6] %>% 
+  mutate(year = 2020) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A...2',
+         bed1 = 'CAT B...3',
+         bed2 = 'CAT C...4',
+         bed3 = 'CAT D...5',
+         bed4 = 'CAT E...6')
+
+# 19/20 
+list_df[[9]] <- read_xlsx(here("data-input", "lha_eng", "2019-20_LHA_TABLES.xlsx"),
+                      sheet = 'Table 4', 
+                      skip = 1) 
+list_df[[9]] <- list_df[[9]][ ,1:6] %>% 
+  mutate(year = 2019) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A...2',
+         bed1 = 'CAT B...3',
+         bed2 = 'CAT C...4',
+         bed3 = 'CAT D...5',
+         bed4 = 'CAT E...6')
+
+# 18/19
+list_df[[8]] <- read_xlsx(here("data-input", "lha_eng", "2018_LHA_TABLES.xlsx"),
+                      sheet = 'Table 4', 
+                      skip = 1) 
+list_df[[8]] <- list_df[[8]][ ,1:6] %>% 
+  mutate(year = 2018) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 17/18 - NB 'Table 5'
+list_df[[7]] <- read_xlsx(here("data-input", "lha_eng", "2017_LHA_TABLES.xlsx"),
+                      sheet = 'Table 5', 
+                      skip = 1) 
+list_df[[7]] <- list_df[[7]][ ,1:6] %>% 
+  mutate(year = 2017) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 16/17 - NB 'Table 3' and xls
+list_df[[6]] <- read_xls(here("data-input", "lha_eng", "FINAL_2016_LHA_RATES.xls"),
+                     sheet = 'Table 3', 
+                     skip = 1) 
+list_df[[6]] <- list_df[[6]][ ,1:6] %>% 
+  mutate(year = 2016) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 15/16 - NB 'Table 4' and xls
+list_df[[5]] <- read_xls(here("data-input", "lha_eng", "FINAL_2015_LHA_RATES.xls"),
+                     sheet = 'Table 4', 
+                     skip = 1) 
+list_df[[5]] <- list_df[[5]][ ,1:6] %>% 
+  mutate(year = 2015) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 14/15 
+list_df[[4]] <- read_xls(here("data-input", "lha_eng", "2014_LHA_RATES.xls"),
+                     sheet = 'Table 4', 
+                     skip = 1) 
+list_df[[4]] <- list_df[[4]][ ,1:6] %>% 
+  mutate(year = 2014) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 13/14
+list_df[[3]] <- read_xls(here("data-input", "lha_eng", "April_2013_LHArates.xls"),
+                     sheet = 'LHA Rates (Weekly)', 
+                     skip = 2) 
+cols <- c(1, 20:24)
+list_df[[3]] <- list_df[[3]][ , cols] %>% 
+  mutate(year = 2013) %>% 
+  rename(brma_name = '...1', 
+         bed0 = 'Room...20',
+         bed1 = '1 Bed...21',
+         bed2 = '2 Bed...22',
+         bed3 = '3 Bed...23',
+         bed4 = '4 Bed...24')
+
+# 12/13
+list_df[[2]] <- read_csv(here("data-input", "lha_eng", "April-2012-LHA-Rates.csv"),
+                     skip = 0) 
+list_df[[2]] <- list_df[[2]][ ,1:6] %>% 
+  mutate(year = 2012) %>% 
+  rename(brma_name = 'BRMA', 
+         bed0 = 'Shared',
+         bed1 = '1 Bedroom',
+         bed2 = '2 Bedrooms',
+         bed3 = '3 Bedrooms',
+         bed4 = '4 Bedrooms')
+
+# combine years for lha
+temp <- do.call(rbind, list_df) %>% 
+  pivot_longer(cols = bed0:bed4, 
+               names_to = 'beds', 
+               names_prefix = 'bed',
+               values_to = 'lha') %>% 
+  mutate(beds = as.numeric(beds))
+
+```
+
+We then read in 30th centile rent levels for English BRMAs in the same way. 
+
+```{r read eng cent30}
+
+# make a list of dfs
+list_df <- list()
+
+# 25/26
+list_df[[15]] <- read_xlsx(here("data-input", "lha_eng", "2025-26_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 2', 
+                      skip = 1) %>% 
+  mutate(year = 2025) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 24/25
+list_df[[14]] <- read_xlsx(here("data-input", "lha_eng", "2024-25_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 2', 
+                      skip = 1) %>% 
+  mutate(year = 2024) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 23/24 
+list_df[[13]] <- read_xlsx(here("data-input", "lha_eng", "2023-24_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 2', 
+                      skip = 1) %>% 
+  mutate(year = 2023) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 22/23 
+list_df[[12]] <- read_xlsx(here("data-input", "lha_eng", "2022-23_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 2', 
+                      skip = 1) %>% 
+  mutate(year = 2022) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 21/22 
+list_df[[11]] <- read_xlsx(here("data-input", "lha_eng", "2021-22_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 2', 
+                      skip = 1) %>% 
+  mutate(year = 2021) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A',
+         bed1 = 'CAT B',
+         bed2 = 'CAT C',
+         bed3 = 'CAT D',
+         bed4 = 'CAT E')
+
+# 20/21 - has monthly as well as weekly so drop
+list_df[[10]] <- read_xlsx(here("data-input", "lha_eng", "AMENDED__CORVID_19__2020_21_LHA_TABLES.xlsx"), 
+                      sheet = 'Table 2', 
+                      skip = 1) 
+list_df[[10]] <- list_df[[10]][ ,1:6] %>% 
+  mutate(year = 2020) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A...2',
+         bed1 = 'CAT B...3',
+         bed2 = 'CAT C...4',
+         bed3 = 'CAT D...5',
+         bed4 = 'CAT E...6')
+
+# 19/20 
+list_df[[9]] <- read_xlsx(here("data-input", "lha_eng", "2019-20_LHA_TABLES.xlsx"),
+                      sheet = 'Table 2', 
+                      skip = 1) 
+list_df[[9]] <- list_df[[9]][ ,1:6] %>% 
+  mutate(year = 2019) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'CAT A...2',
+         bed1 = 'CAT B...3',
+         bed2 = 'CAT C...4',
+         bed3 = 'CAT D...5',
+         bed4 = 'CAT E...6')
+
+# 18/19
+list_df[[8]] <- read_xlsx(here("data-input", "lha_eng", "2018_LHA_TABLES.xlsx"),
+                      sheet = 'Table 2', 
+                      skip = 1) 
+list_df[[8]] <- list_df[[8]][ ,1:6] %>% 
+  mutate(year = 2018) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 17/18 - NB 'Table 5'
+list_df[[7]] <- read_xlsx(here("data-input", "lha_eng", "2017_LHA_TABLES.xlsx"),
+                      sheet = 'Table 5', 
+                      skip = 1) 
+list_df[[7]] <- list_df[[7]][ ,1:6] %>% 
+  mutate(year = 2017) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 16/17 - NB 'Table 3' and xls
+list_df[[6]] <- read_xls(here("data-input", "lha_eng", "FINAL_2016_LHA_RATES.xls"),
+                     sheet = 'Table 3', 
+                     skip = 1) 
+list_df[[6]] <- list_df[[6]][ ,1:6] %>% 
+  mutate(year = 2016) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 15/16 - NB 'Table 2' and xls
+list_df[[5]] <- read_xls(here("data-input", "lha_eng", "FINAL_2015_LHA_RATES.xls"),
+                     sheet = 'Table 2', 
+                     skip = 1) 
+list_df[[5]] <- list_df[[5]][ ,1:6] %>% 
+  mutate(year = 2015) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 14/15 
+list_df[[4]] <- read_xls(here("data-input", "lha_eng", "2014_LHA_RATES.xls"),
+                     sheet = 'Table 2', 
+                     skip = 1) 
+list_df[[4]] <- list_df[[4]][ ,1:6] %>% 
+  mutate(year = 2014) %>% 
+  rename(brma_name = BRMA, 
+         bed0 = 'Room...2',
+         bed1 = '1 Bed...3',
+         bed2 = '2 Bed...4',
+         bed3 = '3 Bed...5',
+         bed4 = '4 Bed...6')
+
+# 13/14
+list_df[[3]] <- read_xls(here("data-input", "lha_eng", "April_2013_LHArates.xls"),
+                     sheet = 'LHA Rates (Weekly)', 
+                     skip = 2) 
+cols <- c(1, 8:12)
+list_df[[3]] <- list_df[[3]][ , cols] %>% 
+  mutate(year = 2013) %>% 
+  rename(brma_name = '...1', 
+         bed0 = 'Room...8',
+         bed1 = '1 Bed...9',
+         bed2 = '2 Bed...10',
+         bed3 = '3 Bed...11',
+         bed4 = '4 Bed...12')
+
+
+# 12/13 - still looking for 30th centile rents
+
+
+# combine cent30
+temp1 <- do.call(rbind, list_df) %>% 
+  pivot_longer(cols = bed0:bed4, 
+               names_to = 'beds', 
+               names_prefix = 'bed',
+               values_to = 'cent30') %>% 
+  mutate(beds = as.numeric(beds))
+
+```
+
+Lastly, we merge LHA rates and 30th centile levels for English BRMAs. 
+
+```{r read eng combine}
+
+# combine
+list_lha[[1]] <- temp %>%
+  left_join(temp1, by = c('brma_name', 'year', 'beds')) %>%
+  select(brma_name, year, beds, cent30, lha)
+
+
+```
+
+
+### Add BRMA number/name
+We add BRMA number to the LHA data frame. 
+
+```{r brma lha eng}
+
+list_lha[[1]] <- list_lha[[1]] %>% 
+  left_join(df_brma, by = 'brma_name') %>% 
+  mutate(country = 'England') %>% 
+  select(country, brma, brma_name, everything())
+
+# # checking
+# list_lha[[1]] %>%
+#   filter(is.na(brma)) %>%
+#   group_by(brma_name) %>%
+#   summarise(n = n())
+
+```
+
+
+## Scotland
+
+### LHA data sources
+For 2016/17 onwards, Excel or csv files can be downloaded from the following pages but they only have LHA rates, not 30th centiles. Tables with 30th centile and LHA rates are shown on these webpages so these were manually copied from the following locations and pasted into a single spreadsheet, saved locally: 
+
+* https://www.gov.scot/publications/local-housing-allowance-rates/pages/2025-to-2026/ 
+* https://www.gov.scot/publications/local-housing-allowance-rates-2024-2025/ 
+* https://www.gov.scot/publications/local-housing-allowance-rates-2023-2024/
+* https://www.gov.scot/publications/local-housing-allowance-rates-2022-2023/
+* https://www.gov.scot/publications/local-housing-allowance-rates-2021-2022/
+* https://www.gov.scot/publications/local-housing-allowance-rates-2020-2021/
+* https://www.gov.scot/publications/local-housing-allowance-rates-2019-2020/
+* https://www.gov.scot/publications/local-housing-allowance-rates-2018-2019/
+* https://www.gov.scot/publications/local-housing-allowance-rates-2017/ 
+* https://www.gov.scot/publications/local-housing-allowance-figures/ [2016-17 - NB that the web page table with 30th centile rates is incomplete - many BRMAs missing; the download on this page is in pdf format but contains 30th centile rents so this is used to patch the 2016 data] 
+
+For earlier years back to 2013/14, information is available from the web archive. Again, there are csv files to download but these only have the LHA rates so tables on each webpage which include 30th centile rates were manually copied and pasted into the same spreadsheet as previously. There is no page for 2012/13. LHA rates for that year can be taken from 2013/14 tables since they provide rates for the previous year but no 30th centile rents are available for the earlier year. Locations are: 
+
+* https://www.webarchive.org.uk/wayback/archive/20170110062429/http://www.gov.scot/Topics/Built-Environment/Housing/privaterent/tenants/Local-Housing-Allowance/figures/april2016 - page does not show 30th centile rates so page listed above used instead; 
+* https://www.webarchive.org.uk/wayback/archive/20170110062435/http://www.gov.scot/Topics/Built-Environment/Housing/privaterent/tenants/Local-Housing-Allowance/figures/lha2015-2016 
+* https://www.webarchive.org.uk/wayback/archive/20170110062439/http://www.gov.scot/Topics/Built-Environment/Housing/privaterent/tenants/Local-Housing-Allowance/figures/lha-2014-2015 
+* https://www.webarchive.org.uk/wayback/archive/20170110062442/http://www.gov.scot/Topics/Built-Environment/Housing/privaterent/tenants/Local-Housing-Allowance/figures/lha-2013-2014 
+
+
+```{r read scot lha cent30}
+
+# make a list of dfs
+list_df <- list()
+
+# 25/26   - no 30th centile values
+list_df[[15]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2025-26',
+                     skip = 5, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2025, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 24/25   - no 30th centile values
+list_df[[14]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2024-25',
+                     skip = 5, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2024, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 23/24   - no 30th centile values
+list_df[[13]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2023-24',
+                     skip = 5, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2023, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 22/23  - no 30th centile values
+list_df[[12]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2022-23',
+                     skip = 5, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2022, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 21/22 
+list_df[[11]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2021-22',
+                     skip = 5, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2021, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 20/21 - no 30th centile values
+list_df[[10]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2020-21',
+                     skip = 5, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2020, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 19/20 
+list_df[[9]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2019-20',
+                     skip = 5, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...5) %>% 
+  select(-...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2019, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 18/19
+list_df[[8]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2018-19',
+                     skip = 4, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...5) %>% 
+  select(-...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2018, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 17/18 
+list_df[[7]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2017-18',
+                     skip = 4, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...5) %>% 
+  select(-...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2017, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 16/17 
+list_df[[6]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2016-17',
+                     skip = 4, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...5) %>% 
+  select(-...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2016, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 15/16
+list_df[[5]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2015-16',
+                     skip = 6, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...5) %>% 
+  select(-...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2015, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 14/15 
+list_df[[4]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2014-15',
+                     skip = 6, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...5) %>% 
+  select(-...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2014, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 13/14 
+list_df[[3]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2013-14',
+                     skip = 4, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         lha_prev = ...2, 
+         cent30 = ...3, 
+         lha = ...5) %>% 
+  select(-...4) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2013, 
+         cent30 = as.numeric(cent30)) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# 12/13 - USE 13/14, COL FOR PREV YEAR'S LHA
+list_df[[2]] <- read_xlsx(here("data-input", "lha_scot", "Scot LHA and 30th centile - various years.xlsx"),
+                     sheet = '2013-14',
+                     skip = 4, 
+                     col_names = FALSE) %>% 
+  rename(beds = ...1,
+         # lha_prev = ...2, 
+         # cent30 = ...3, 
+         lha = ...2) %>% 
+  select(-...3, -...4, -...5) %>% 
+  mutate(brma_name = case_when(!(grepl('Bedroom', beds)) ~ beds),
+         beds = as.numeric(case_when(grepl('Shared', beds) ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2012, 
+         lha_prev = NaN,
+         cent30 = NaN) %>% 
+  fill(brma_name) %>% 
+  filter(!is.na(lha)) 
+
+# combine
+list_lha[[2]] <- do.call(rbind, list_df) %>% 
+  select(brma_name, year, beds, cent30, lha)
+
+# fix names so consistent with BRMA lookup
+list_lha[[2]] <- list_lha[[2]] %>% 
+  mutate(brma_name = case_when(grepl("Ayrshire", brma_name) ~ "Ayrshire", 
+                               grepl("Highland", brma_name) ~ "Highland and Islands", 
+                               grepl("Renfrewshire", brma_name) ~ "Renfrewshire / Inverclyde", 
+                               grepl("Inverclyde", brma_name) ~ "Renfrewshire / Inverclyde", 
+                               grepl("Edinburgh", brma_name) ~ "Lothian",
+                               TRUE ~ brma_name))
+
+```
+
+
+### Add BRMA number/name
+We add the BRMA number to the LHA data frame for Scotland. 
+
+```{r brma lha scot}
+
+list_lha[[2]] <- list_lha[[2]] %>% 
+  left_join(df_brma, by = 'brma_name') %>% 
+  mutate(country = 'Scotland') %>% 
+  select(country, brma, brma_name, everything())
+
+# # checking: ok
+# list_lha[[2]] %>%
+#   filter(is.na(brma)) %>%
+#   group_by(brma_name) %>%
+#   summarise(n = n())
+
+
+```
+
+## Wales
+
+### LHA data sources
+For 2013/14 onwards, LHA rates and 30th centile rents appear in the same tables in spreadsheets accessible from this page: https://www.gov.wales/local-housing-allowance-lha-rates. As in Scotland, there is no webpage for 2012/13. LHA rates for that year can be taken from 2013/14 tables since they provide LHA rates for the previous year. No 30th centile rents are available for 2012/13. There are a very small number of cases (e.g. 2022/23 and 2023/24) where 30th centile rents are also missing. The 30th centile rents are also missing in 2020/21 but these can be patched since LHA rates were reset to the 30th centile that year, following the onset of the pandemic. 
+
+
+```{r read wales lha cent30}
+
+# make a list of dfs
+list_df <- list()
+
+# 25/26
+# - changed layout from previous year 
+# - 'current lha' has gone so add manually so that rbind works later
+list_df[[15]] <- read_ods(here("data-input", "lha_wales",
+                               "local-housing-allowance-rates-2025-2026.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 7, 
+                     col_names = FALSE) 
+names(list_df[[15]]) <- c("brma", "beds", "cent30", "lha") 
+
+list_df[[15]] <- list_df[[15]] %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2025) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) %>% 
+  mutate(lha_prev = NaN)
+
+# 24/25
+# - changed layout from previous year
+list_df[[14]] <- read_ods(here("data-input", "lha_wales",
+                               "local-housing-allowance-rates-2024-2025.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 7, 
+                     col_names = FALSE) 
+names(list_df[[14]]) <- c("brma", "beds", "lha_prev", "cent30", "lha") 
+
+list_df[[14]] <- list_df[[14]] %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         year = 2024) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 23/24 
+list_df[[13]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-April-2023-March-2024.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 6, 
+                     col_names = FALSE) 
+names(list_df[[13]]) <- c("brma", "beds", "cent30", "lha") 
+list_df[[13]] <- list_df[[13]] %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = NaN, 
+         year = 2023) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha))
+
+# 22/23  
+list_df[[12]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-April-2022-March-2023.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 6, 
+                     col_names = FALSE) 
+names(list_df[[12]]) <- c("brma", "beds", "cent30", "lha") 
+list_df[[12]] <- list_df[[12]] %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = NaN, 
+         year = 2022) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 21/22 
+list_df[[11]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-April-2021-March-2022.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 6, 
+                     col_names = FALSE) 
+names(list_df[[11]]) <- c("brma", "beds", "lha_prev", "cent30", "lha") 
+list_df[[11]] <- list_df[[11]] %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2021) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 20/21 - no 30th centile values given but use LHA this year since reset to 30th centile
+list_df[[10]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-April-2020-March-2021.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 6, 
+                     col_names = FALSE) 
+names(list_df[[10]]) <- c("brma", "beds", "lha_prev", "lha") 
+list_df[[10]] <- list_df[[10]] %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         cent30 = lha,
+         lha_prev = as.numeric(lha_prev), 
+         year = 2020) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 19/20 
+list_df[[9]] <- read_ods(here("data-input", "lha_wales", "190131-local-housing-allowance-rates-2019.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 6, 
+                     col_names = FALSE)
+names(list_df[[9]]) <- c("brma", "beds", "lha_prev", "cent30", "E", "lha") 
+list_df[[9]] <- list_df[[9]] %>% 
+  select(-E) %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2019) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 18/19
+list_df[[8]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-2018.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 6, 
+                     col_names = FALSE)
+names(list_df[[8]]) <- c("brma", "beds", "lha_prev", "cent30", "E", "lha") 
+list_df[[8]] <- list_df[[8]] %>% 
+  select(-E) %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2018) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 17/18 
+list_df[[7]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-2017.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 6, 
+                     col_names = FALSE)
+names(list_df[[7]]) <- c("brma", "beds", "lha_prev", "cent30", "E", "lha") 
+list_df[[7]] <- list_df[[7]] %>% 
+  select(-E) %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2017) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 16/17 
+list_df[[6]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-2016_0.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 7, 
+                     col_names = FALSE)
+names(list_df[[6]]) <- c("brma", "beds", "lha_prev", "cent30", "lha") 
+list_df[[6]] <- list_df[[6]] %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(substr(beds, 1, 5)),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(substr(beds, 1, 2))), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2016) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# 15/16 - NB 'Table 4' and xls
+list_df[[5]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-2015_0.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 9, 
+                     col_names = FALSE)
+names(list_df[[5]]) <- c("brma", "beds", "C", "lha_prev", "cent30", "F", "G", "lha") 
+list_df[[5]] <- list_df[[5]] %>% 
+  select(-C, -F, -G) %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(beds),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(beds)), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2015) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+
+# 14/15 
+list_df[[4]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-2014_0.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 9, 
+                     col_names = FALSE)
+names(list_df[[4]]) <- c("brma", "beds", "C", "lha_prev", "cent30", "F", "G", "lha") 
+list_df[[4]] <- list_df[[4]] %>% 
+  select(-C, -F, -G) %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(beds),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(beds)), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2014) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+
+# 13/14 
+list_df[[3]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-2013.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 10, 
+                     col_names = FALSE)
+names(list_df[[3]]) <- c("brma", "beds", "C", "lha_prev", "cent30", "E", "lha") 
+list_df[[3]] <- list_df[[3]] %>% 
+  select(-C, -E) %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(beds),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(beds)), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha_prev = as.numeric(lha_prev), 
+         year = 2013) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+  
+# 12/13 - USE 13/14, COL FOR PREV YEAR'S LHA
+list_df[[2]] <- read_ods(here("data-input", "lha_wales", "local-housing-allowance-rates-2013.ods"),
+                     sheet = 'Table_1_-_Weekly',
+                     skip = 10, 
+                     col_names = FALSE)
+names(list_df[[2]]) <- c("brma", "beds", "C", "lha", "E", "F", "G") 
+list_df[[2]] <- list_df[[2]] %>% 
+  select(-C, -E, -F, -G) %>% 
+  mutate(brma = case_when(substr(beds, 1, 1) == "9" ~ as.numeric(beds),
+                          substr(beds, 1, 2) == "16" ~ as.numeric(beds)), 
+         beds = as.numeric(case_when(substr(beds, 1, 1) == "S" ~ "0", 
+                                     TRUE ~ substr(beds, 1, 1))),
+         lha = as.numeric(lha),
+         lha_prev = NaN, 
+         cent30 = NaN, 
+         year = 2012) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) 
+
+# combine
+list_lha[[3]] <- do.call(rbind, list_df) %>% 
+  select(brma, year, beds, cent30, lha)
+
+```
+
+
+### Add BRMA number/name
+Add BRMA name to LHA data frame. Since Welsh data frame has BRMA number, no issues with missing values. Remove the BRMA which crosses the border with England (16 = West Cheshire) since already covered there. 
+
+```{r brma lha wales}
+
+list_lha[[3]] <- list_lha[[3]] %>% 
+  left_join(df_brma, by = 'brma') %>% 
+  mutate(country = 'Wales') %>% 
+  select(country, brma, brma_name, everything()) 
+
+# filter out the BRMA which crosses from England so only appears once in final database
+list_lha[[3]] <- list_lha[[3]] %>% 
+  filter(brma != 16)
+
+# # checking
+# list_lha[[3]] %>%
+#   filter(is.na(brma)) %>%
+#   group_by(brma_name) %>%
+#   summarise(n = n())
+
+
+```
+
+## Northern Ireland
+
+### LHA data sources
+For the years 2012/13 to 2023/24, data for NI was provided by NIHE in two spreadsheets in response to an FoI request (FOI 358, response 24 April 2024). One contains LHA rates and the other the estimated 30th centile rents. 
+
+Latest data on LHA rates taken from webpage and stored in 'NI LHA.xlsx'. 30th centile rents are missing for 2025/26. 
+
+* https://www.nihe.gov.uk/housing-help/local-housing-allowance/future-lha-rent-levels
+
+```{r read ni lha}
+
+# make a list of dfs
+list_df <- list()
+
+# 25/26
+i = 15
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "NI LHA.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = FALSE) 
+names(list_df[[i]]) <- c('beds')
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(brma_name = case_when(grepl('BRMA', beds) ~ beds), 
+         brma_name = substr(brma_name, 1, str_locate(beds, " BRMA") - 1 )) %>% 
+  fill(brma_name) %>% 
+  filter(!grepl('BRMA', beds)) %>% 
+  mutate(lha = as.numeric(substr(beds, str_locate(beds, "£") + 1, 
+                                 str_length(beds))),
+         beds = substr(beds, 1, str_locate(beds, ":") - 1),
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+  
+list_df[[i]] <- list_df[[i]] %>% 
+  left_join(df_brma, by = 'brma_name') %>% 
+  select(-brma_name)
+
+
+# 24/25
+i = 14
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "NI LHA.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = FALSE) 
+names(list_df[[i]]) <- c('beds')
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(brma_name = case_when(grepl('BRMA', beds) ~ beds), 
+         brma_name = substr(brma_name, 1, str_locate(beds, " BRMA") - 1 )) %>% 
+  fill(brma_name) %>% 
+  filter(!grepl('BRMA', beds)) %>% 
+  mutate(lha = as.numeric(substr(beds, str_locate(beds, "£") + 1, 
+                                 str_length(beds))),
+         beds = substr(beds, 1, str_locate(beds, ":") - 1),
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+  
+list_df[[i]] <- list_df[[i]] %>% 
+  left_join(df_brma, by = 'brma_name') %>% 
+  select(-brma_name)
+
+
+# 23/24 
+i = 13
+y = 2010+i
+s = 'April 20 to March 2024'
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+names(list_df[[i]]) <- c('beds', 'lha')
+list_df[[i]] <- list_df[[i]] %>% 
+  filter(!is.na(beds)) %>% 
+  mutate(brma = case_when(is.na(lha) ~ beds)) %>% 
+  fill(brma) %>% 
+  filter(!is.na(lha)) %>% 
+  mutate(brma = as.numeric(substr(brma, 6, 7)) + 200,
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+  
+
+# 22/23 
+y = 2022
+list_df[[12]] <- list_df[[13]] %>% 
+  mutate(year = y)
+
+
+# 21/22 
+y = 2021
+list_df[[11]] <- list_df[[13]] %>% 
+  mutate(year = y)
+
+
+# 20/21
+y = 2020
+list_df[[10]] <- list_df[[13]] %>% 
+  mutate(year = y)
+
+
+# 19/20 
+i = 9
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(beds = case_when(is.na(beds) ~ lead(beds, 1))) %>% 
+  filter(!is.na(BRMA8)) %>% 
+  filter(beds != 'Postcode') %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         lha = round(as.numeric(lha), 2),
+         year = y)
+
+
+# 18/19
+i = 8
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 3, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(beds = case_when(is.na(beds) ~ lead(beds, 1))) %>% 
+  filter(!is.na(BRMA8)) %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 17/18 
+i = 7
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(beds = case_when(is.na(beds) ~ lead(beds, 1))) %>% 
+  filter(!is.na(BRMA8)) %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 16/17 
+i = 6
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(beds = case_when(is.na(beds) ~ lead(beds, 1))) %>% 
+  filter(!is.na(BRMA8)) %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 15/16
+i = 5
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(beds = case_when(is.na(beds) ~ lead(beds, 1))) %>% 
+  filter(!is.na(BRMA8)) %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 14/15 
+i = 4
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 3, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 13/14 
+i = 3
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 12/13
+i = 2
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "Actual LHA Rent levels applied.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'lha') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# combine
+df_temp_ni <- do.call(rbind, list_df) %>%
+  select(brma, year, beds, lha)
+
+# # quick check
+# table(df_temp_ni2$brma, df_temp_ni2$year)
+
+
+```
+Data on 30th centile rents were provided in a spreadsheet as part of the response to the FoI request. They cover most of the years to 2024/25. The NIHE does not appear to publish 30th centile rents online so these are currently missing for 2025/26. 
+
+```{r read ni cent30}
+
+# make a list of dfs
+list_df <- list()
+
+# 24/25
+i = 14
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- c('brma', 'location', 'beds', 'cent30')
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  select(-location) %>% 
+  mutate(beds = case_when(grepl('1 Shared', beds) ~ 0,
+                          grepl('1B', beds) ~ 1,
+                          grepl('2B', beds) ~ 2,
+                          grepl('3B', beds) ~ 3,
+                          grepl('4B', beds) ~ 4),
+         brma = as.numeric(brma) + 200,
+         year = y) 
+
+
+# 23/24 
+i = 13
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 0, 
+                               col_names = TRUE) 
+names(list_df[[i]]) <- c('beds', 'cent30')
+list_df[[i]] <- list_df[[i]] %>% 
+  filter(!is.na(beds)) %>% 
+  mutate(brma = case_when(is.na(cent30) ~ beds)) %>% 
+  fill(brma) %>% 
+  filter(!is.na(cent30)) %>% 
+  mutate(brma = substr(brma, str_locate(brma, "[0-9]"), str_locate(brma, "[0-9]")),
+         brma = as.numeric(brma) + 200,
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         cent30 = round(as.numeric(cent30), 2),
+         year = y)
+
+
+# 22/23  
+i = 12
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 0, 
+                               col_names = TRUE) 
+names(list_df[[i]]) <- c('beds', 'cent30')
+list_df[[i]] <- list_df[[i]] %>% 
+  filter(!is.na(beds)) %>% 
+  mutate(brma = case_when(is.na(cent30) ~ beds)) %>% 
+  fill(brma) %>% 
+  filter(!is.na(cent30)) %>% 
+  mutate(brma = substr(brma, str_locate(brma, "[0-9]"), str_locate(brma, "[0-9]")),
+         brma = as.numeric(brma) + 200,
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         cent30 = round(as.numeric(cent30), 2),
+         year = y)
+
+
+# 21/22 
+i = 11
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 0, 
+                               col_names = TRUE) 
+names(list_df[[i]]) <- c('beds', 'cent30')
+list_df[[i]] <- list_df[[i]] %>% 
+  filter(!is.na(beds)) %>% 
+  mutate(brma = case_when(is.na(cent30) ~ beds)) %>% 
+  fill(brma) %>% 
+  filter(!is.na(cent30)) %>% 
+  mutate(brma = as.numeric(substr(brma, str_locate(brma, "[0-9]"), str_locate(brma, "[0-9]"))) + 200,
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 20/21
+i = 10
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 0, 
+                               col_names = TRUE) 
+names(list_df[[i]]) <- c('beds', 'cent30')
+list_df[[i]] <- list_df[[i]] %>% 
+  filter(!is.na(beds)) %>% 
+  mutate(brma = case_when(is.na(cent30) ~ beds)) %>% 
+  fill(brma) %>% 
+  filter(!is.na(cent30)) %>% 
+  mutate(brma = as.numeric(substr(brma, 6, 7)) + 200,
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 19/20 
+i = 9
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- c('brma', 'beds', 'cent30')
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(beds = case_when(grepl('1S', beds) ~ 0,
+                          grepl('1B', beds) ~ 1,
+                          grepl('2B', beds) ~ 2,
+                          grepl('3B', beds) ~ 3,
+                          grepl('4B', beds) ~ 4),
+         brma = brma + 200,
+         year = y) 
+
+
+# 18/19
+## no data provided
+
+
+# 17/18 
+i = 7
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- c('brma', 'beds', 'cent30')
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(beds = case_when(grepl('1S', beds) ~ 0,
+                          grepl('1B', beds) ~ 1,
+                          grepl('2B', beds) ~ 2,
+                          grepl('3B', beds) ~ 3,
+                          grepl('4B', beds) ~ 4),
+         brma = as.numeric(brma) + 200,
+         year = y) 
+
+
+# 16/17 
+i = 6
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- c('brma', 'beds', 'cent30')
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(brma = case_when(grepl("BRMA", brma) ~ brma, 
+                          TRUE ~ NA),
+         brma = as.numeric(substr(brma, 5,6)) + 200,
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y) %>% 
+  fill(brma)
+
+
+# 15/16
+i = 5
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- c('brma', 'beds', 'cent30')
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(brma = case_when(grepl("BRMA", brma) ~ brma, 
+                          TRUE ~ NA),
+         brma = as.numeric(substr(brma, 5,6)) + 200,
+         beds = case_when(grepl('Single', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y) %>% 
+  fill(brma)
+
+
+# 14/15 
+i = 4
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 2, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- gsub(" ", "", names(list_df[[i]]))
+names(list_df[[i]])[1] <- "beds"
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  pivot_longer(cols = contains("BRMA"),
+               names_to = 'brma',
+               values_to = 'cent30') %>% 
+  mutate(brma = as.numeric(gsub("BRMA", "", brma)) + 200,
+         beds = case_when(grepl('Shared', beds) ~ 0,
+                          grepl('1', beds) ~ 1,
+                          grepl('2', beds) ~ 2,
+                          grepl('3', beds) ~ 3,
+                          grepl('4', beds) ~ 4),
+         year = y)
+
+
+# 13/14 
+i = 3
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- c("brma", "beds", "cent30")
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(brma = as.numeric(brma) + 200,
+         beds = case_when(grepl('1S', beds) ~ 0,
+                          grepl('1B', beds) ~ 1,
+                          grepl('2B', beds) ~ 2,
+                          grepl('3B', beds) ~ 3,
+                          grepl('4B', beds) ~ 4),
+         year = y)
+
+
+# 12/13
+i = 2
+y = 2010+i
+s = paste0('April ', y)
+#
+list_df[[i]] <- read_xlsx(here("data-input", "lha_ni", 
+                                    "LHA 30th percentile calculations by year.xlsx"),
+                               sheet = s,
+                               skip = 1, 
+                               col_names = TRUE) 
+# fix colnames
+names(list_df[[i]]) <- c("brma", "beds", "cent30")
+
+# long form and tidy
+list_df[[i]] <- list_df[[i]] %>% 
+  mutate(brma = as.numeric(brma) + 200,
+         beds = case_when(grepl('1S', beds) ~ 0,
+                          grepl('1B', beds) ~ 1,
+                          grepl('2B', beds) ~ 2,
+                          grepl('3B', beds) ~ 3,
+                          grepl('4B', beds) ~ 4),
+         year = y)
+
+
+# combine cent30 data
+df_temp_ni2 <- do.call(rbind, list_df) %>%
+  select(brma, year, beds, cent30)
+
+# # quick check
+# table(df_temp_ni2$brma, df_temp_ni2$year)
+
+
+# combine lha and cent30
+df_temp_ni <- df_temp_ni %>%
+  left_join(df_temp_ni2,
+            by = c('brma', 'year', 'beds')) %>%
+  mutate(cent30 = round(cent30, 2))
+
+
+# add to list
+list_lha[[4]] <- df_temp_ni
+
+# tidy
+rm(df_temp_ni)
+rm(df_temp_ni2)
+
+
+
+```
+
+### Add BRMA name
+Add BRMA name to LHA data frame. 
+
+```{r brma lha ni}
+
+list_lha[[4]] <- list_lha[[4]] %>% 
+  left_join(df_brma, by = 'brma') %>% 
+  mutate(country = 'Northern Ireland') %>% 
+  select(country, brma, brma_name, everything()) 
+
+# # checking
+# list_lha[[4]] %>%
+#   filter(is.na(brma)) %>%
+#   group_by(brma_name) %>%
+#   summarise(n = n())
+
+
+```
+
+## Combine countries to UK file
+We combine the four country files into one. 
+
+```{r combine lha}
+
+df_lha <- do.call(rbind, list_lha)
+
+```
+
+
+## Checking
+Two tables to check the number of cases with values for LHA and for 30th centile rents by country and year.
+
+* Missing 30th centile rents for GB in 2012 and NI in 2018. Occasional missing data for 30th centile in other years. 
+
+```{r lha check}
+
+# no. of cases with LHA by country and year - should be five times no. BRMAs
+table(df_lha$country[!is.na(df_lha$lha)], df_lha$year[!is.na(df_lha$lha)])
+
+# no. of cases with 30th centile value by country and year - should be five times no. BRMAs
+table(df_lha$country[!is.na(df_lha$cent30)], df_lha$year[!is.na(df_lha$cent30)])
+
+```
+
+
+## Save LHA rates
+We save the combined data frame covering all BRMAs in UK from 2012/13 onwards as a csv file. 
+
+```{r save}
+
+# brma lha rates
+write_csv(df_lha, here("data-output", output_filename))
+
+```
